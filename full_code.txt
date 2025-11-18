@@ -1,0 +1,256 @@
+
+// ======================================================
+// --- Content from: src/app.controller.spec.ts
+// ======================================================
+
+import { Test, TestingModule } from '@nestjs/testing';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+
+describe('AppController', () => {
+  let appController: AppController;
+
+  beforeEach(async () => {
+    const app: TestingModule = await Test.createTestingModule({
+      controllers: [AppController],
+      providers: [AppService],
+    }).compile();
+
+    appController = app.get<AppController>(AppController);
+  });
+
+  describe('root', () => {
+    it('should return "Hello World!"', () => {
+      expect(appController.getHello()).toBe('Hello World!');
+    });
+  });
+});
+
+
+// ======================================================
+// --- Content from: src/app.controller.ts
+// ======================================================
+
+import { Controller, Get } from '@nestjs/common';
+import { AppService } from './app.service';
+
+@Controller()
+export class AppController {
+  constructor(private readonly appService: AppService) {}
+
+  @Get()
+  getHello(): string {
+    return this.appService.getHello();
+  }
+}
+
+
+// ======================================================
+// --- Content from: src/app.module.ts
+// ======================================================
+
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { LocationModule } from './location/location.module';
+
+@Module({
+  imports: [
+    // Loads .env file globally
+    ConfigModule.forRoot({ isGlobal: true }), 
+    LocationModule,
+  ],
+})
+export class AppModule {}
+
+
+// ======================================================
+// --- Content from: src/app.service.ts
+// ======================================================
+
+import { Injectable } from '@nestjs/common';
+
+@Injectable()
+export class AppService {
+  getHello(): string {
+    return 'Hello World!';
+  }
+}
+
+
+// ======================================================
+// --- Content from: src/location/dto/search-location.dto.ts
+// ======================================================
+
+import { IsString, IsNotEmpty, IsNumber, IsOptional } from 'class-validator';
+import { Type } from 'class-transformer';
+
+export class SearchLocationDto {
+  @IsString()
+  @IsNotEmpty()
+  query: string;
+}
+
+export class RouteDto {
+  // Coordinates for Start
+  @Type(() => Number)
+  @IsNumber()
+  startLat: number;
+
+  @Type(() => Number)
+  @IsNumber()
+  startLon: number;
+
+  // Coordinates for End
+  @Type(() => Number)
+  @IsNumber()
+  endLat: number;
+
+  @Type(() => Number)
+  @IsNumber()
+  endLon: number;
+}
+
+// ======================================================
+// --- Content from: src/location/location.controller.ts
+// ======================================================
+
+import { Controller, Get, Query, UsePipes, ValidationPipe } from '@nestjs/common';
+import { LocationService } from './location.service';
+import { SearchLocationDto, RouteDto } from './dto/search-location.dto';
+
+@Controller('location')
+export class LocationController {
+  constructor(private readonly locationService: LocationService) {}
+
+  @Get('search')
+  @UsePipes(new ValidationPipe({ transform: true }))
+  search(@Query() params: SearchLocationDto) {
+    return this.locationService.searchPlace(params.query);
+  }
+
+  @Get('route')
+  @UsePipes(new ValidationPipe({ transform: true }))
+  getRoute(@Query() params: RouteDto) {
+    return this.locationService.getRoute(
+      params.startLat,
+      params.startLon,
+      params.endLat,
+      params.endLon,
+    );
+  }
+}
+
+
+// ======================================================
+// --- Content from: src/location/location.module.ts
+// ======================================================
+
+import { Module } from '@nestjs/common';
+import { HttpModule } from '@nestjs/axios';
+import { LocationService } from './location.service';
+import { LocationController } from './location.controller';
+
+@Module({
+  imports: [HttpModule], // Import HttpModule
+  controllers: [LocationController],
+  providers: [LocationService],
+})
+export class LocationModule {}
+
+
+// ======================================================
+// --- Content from: src/location/location.service.ts
+// ======================================================
+
+import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
+import { HttpService } from '@nestjs/axios';
+import { ConfigService } from '@nestjs/config';
+import { lastValueFrom } from 'rxjs';
+
+@Injectable()
+export class LocationService {
+    private readonly apiKey: string;
+    private readonly baseUrl = 'https://api.locationiq.com/v1';
+    private readonly routeUrl = 'https://us1.locationiq.com/v1/directions/driving';
+
+    constructor(
+        private readonly httpService: HttpService,
+        private readonly configService: ConfigService,
+    ) {
+        const apiKey = this.configService.get<string>('LOCATIONIQ_API_KEY');
+        if (!apiKey) {
+            throw new Error('LOCATIONIQ_API_KEY environment variable is required');
+        }
+        this.apiKey = apiKey;
+    }
+
+    // 1. Proxy for Autocomplete Search
+    async searchPlace(query: string) {
+        try {
+            const response = await lastValueFrom(
+                this.httpService.get(`${this.baseUrl}/autocomplete`, {
+                    params: {
+                        key: this.apiKey, // Key is added here, server-side
+                        q: query,
+                        limit: 5,
+                        normalizecity: 1,
+                        format: 'json',
+                    },
+                }),
+            );
+            return response.data;
+        } catch (error) {
+            throw new HttpException(
+                'Failed to fetch location data',
+                HttpStatus.BAD_GATEWAY,
+            );
+        }
+    }
+
+    // 2. Proxy for Routing
+    async getRoute(startLat: number, startLon: number, endLat: number, endLon: number) {
+        try {
+            // LocationIQ format: lon,lat;lon,lat
+            const coordinates = `${startLon},${startLat};${endLon},${endLat}`;
+
+            const response = await lastValueFrom(
+                this.httpService.get(`${this.routeUrl}/${coordinates}`, {
+                    params: {
+                        key: this.apiKey, // Key is added here
+                        steps: 'false',
+                        geometries: 'polyline',
+                        overview: 'full',
+                    },
+                }),
+            );
+            return response.data;
+        } catch (error) {
+            throw new HttpException(
+                'Failed to fetch route data',
+                HttpStatus.BAD_GATEWAY,
+            );
+        }
+    }
+}
+
+
+// ======================================================
+// --- Content from: src/main.ts
+// ======================================================
+
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  
+  // Enable CORS to allow React frontend to call this API
+  app.enableCors({
+    origin: 'http://localhost:8080', // Adjust this to your React app's URL
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+  });
+
+  await app.listen(3000);
+}
+bootstrap();
+
