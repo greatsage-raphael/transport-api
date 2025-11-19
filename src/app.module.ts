@@ -1,14 +1,17 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { EventEmitterModule } from '@nestjs/event-emitter'; // Import EventEmitterModule
 import { LocationModule } from './location/location.module';
-import { JourneyGateway } from './journey/journey.gateway';
+import { EmailModule } from './email/email.module'; // Import EmailModule
+import { LoadingChargeModule } from './loading-charge/loading-charge.module';
 
 @Module({
   imports: [
-    // Loads .env file globally
-    ConfigModule.forRoot({ isGlobal: true }), 
+    ConfigModule.forRoot({ isGlobal: true }),
+    EventEmitterModule.forRoot(), // Add this to enable event handling
     LocationModule,
+    EmailModule,
+    LoadingChargeModule, // Add the new EmailModule
   ],
-  providers: [JourneyGateway],
 })
 export class AppModule {}
